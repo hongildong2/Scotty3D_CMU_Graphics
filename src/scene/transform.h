@@ -14,6 +14,7 @@ public:
 	Transform(Vec3 t, Quat q, Vec3 s) : translation(t), rotation(q), scale(s) {
 	}
 
+
 	std::weak_ptr<Transform> parent;
 	Vec3 translation = Vec3{0.0f, 0.0f, 0.0f};
 	Quat rotation = Quat::euler(Vec3{0.0f, 0.0f, 0.0f});
