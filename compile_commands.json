@@ -1,0 +1,23 @@
+[
+    {
+        "directory": "/Users/yooseungjun/Documents/Scotty3D_CMU_Graphics/",
+        "arguments": [
+            "clang++",
+            "-std=c++17",
+            "-Wall",
+            "-Werror",
+            "-Isrc",
+            "-Ideps",
+            "-Inest-libs/macos/SDL2/include/SDL2",
+            "-D_THREAD_SAFE",
+            "-MD",
+            "-MT 'x '",
+            "-MF objs/src/main.d",
+            "-c",
+            "-o",
+            "objs/src/main.o",
+            "src/main.cpp"
+        ],
+        "file": "Scotty3D"
+    }
+]
