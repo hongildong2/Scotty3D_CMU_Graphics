@@ -1,13 +1,13 @@
 // clang-format off
 #include "pipeline.h"
 
-#include <iostream>
-#include <limits>
+#include <iostream> // IWYU pragma: keep
+#include <limits> // IWYU pragma: keep
 
 #include "../lib/log.h"
-#include "../lib/mathlib.h"
+#include "../lib/mathlib.h" // IWYU pragma: keep
 #include "framebuffer.h"
-#include "sample_pattern.h"
+#include "sample_pattern.h" // IWYU pragma: keep
 template<PrimitiveType primitive_type, class Program, uint32_t flags>
 void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& vertices,
                                                    typename Program::Parameters const& parameters,
