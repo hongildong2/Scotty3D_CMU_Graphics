@@ -2,6 +2,7 @@
 #include "pipeline.h"
 
 #include <iostream>
+#include <limits>
 
 #include "../lib/log.h"
 #include "../lib/mathlib.h"
@@ -361,15 +362,138 @@ void Pipeline<p, P, flags>::rasterize_line(
 	// this function!
 	// The OpenGL specification section 3.5 may also come in handy.
 
-	{ // As a placeholder, draw a point in the middle of the line:
-		//(remove this code once you have a real implementation)
-		Fragment mid;
-		mid.fb_position = (va.fb_position + vb.fb_position) / 2.0f;
-		mid.attributes = va.attributes;
-		mid.derivatives.fill(Vec2(0.0f, 0.0f));
-		emit_fragment(mid);
+
+	const ClippedVertex* pFromV;
+	const ClippedVertex* pToV;
+
+
+	Vec3 pB_pA3 = vb.fb_position - va.fb_position;
+	float slope = pB_pA3.y / pB_pA3.x;
+	if (floor(va.fb_position.x) == floor(vb.fb_position.x) && floor(va.fb_position.y) == floor(vb.fb_position.y))
+	{
+		return;
+	}
+	else if (floor(va.fb_position.x) == floor(vb.fb_position.x)) // vert
+	{
+		slope = 2.f;
+	}
+	else if (floor(va.fb_position.y) == floor(vb.fb_position.y)) // horz
+	{
+		slope = 0.1f;
 	}
 
+
+	bool bXMajored = true;
+	if (std::abs(slope) < 1.f) // x major
+	{
+		if (va.fb_position.x < vb.fb_position.x)
+		{
+			pFromV = &va;
+			pToV = &vb;
+		}
+		else
+		{	
+			pFromV = &vb;
+			pToV = &va;
+		}
+	}
+	 // TODO :: else if == 1.f
+	else // y major
+	{
+		bXMajored = false;
+		if (va.fb_position.y < vb.fb_position.y)
+		{
+			pFromV = &va;
+			pToV = &vb;
+		}
+		else
+		{
+			pFromV = &vb;
+			pToV = &va;
+		}
+	}
+
+
+	
+
+
+	float dRow;
+	float dCol;
+	int inc = 1;
+	uint col;
+	uint rowStart;
+	Vec3 fromPos = pFromV->fb_position;
+	Vec3 toPos = pToV->fb_position;
+
+	Vec2 start;
+	Vec2 end;
+	if (bXMajored)
+	{
+		dRow = toPos.x - fromPos.x;
+		dCol = toPos.y - fromPos.y;
+		rowStart = fromPos.x;
+		col = fromPos.y;
+
+		start.x = fromPos.x;
+		start.y = fromPos.y;
+
+		end.x = toPos.x;
+		end.y = toPos.y;
+	}
+	else
+	{
+		dRow = toPos.y - fromPos.y;
+		dCol = toPos.x - fromPos.x;
+		rowStart = fromPos.y;
+		col = fromPos.x;
+
+		start.x = fromPos.y;
+		start.y = fromPos.x;
+
+		end.x = toPos.y;
+		end.y = toPos.x;
+	}
+
+	if (dCol < 0.f)
+	{
+		inc = -inc;
+		dCol = -dCol;
+	}
+
+	float D = (2.f * dCol) - dRow;
+	float diff = dCol - dRow;
+	
+	
+	Fragment frag;
+	Vec2 pB_pA2 = end - start;
+	auto interpolate_attr = [](const float t, const std::array<float, FA>& a, const std::array<float, FA>& b, float invWa, float invWb, std::array<float, FA>& outAttributes)
+	{
+		for (uint i = 0; i < FA; ++i)
+		{
+			outAttributes[i] = ((1.f - t) * a[i] * invWa + t * b[i] * invWb) / (1.f - t) * invWa + t * invWb;
+		}
+	};
+
+	for (uint row = rowStart; row < end.x; ++row)
+	{
+		Vec2 pixel = bXMajored ? Vec2{row + 0.5f, col + 0.5f} : Vec2{col + 0.5f, row + 0.5f};
+		float t = dot(pixel - start, pB_pA2) / pB_pA2.norm_squared();
+		frag.fb_position = Vec3{pixel.x, pixel.y, (1.f - t) * fromPos.z + t * toPos.z};
+		interpolate_attr(t, pFromV->attributes, pToV->attributes, pFromV->inv_w, pToV->inv_w, frag.attributes);
+		frag.derivatives = {};
+
+		emit_fragment(frag);
+
+		if (D > 0)
+		{
+			col += inc;
+			D += 2.f * diff;
+		}
+		else
+		{
+			D += 2.f * dCol;
+		}
+	}
 }
 
 /*
