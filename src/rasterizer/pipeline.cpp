@@ -550,6 +550,95 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(va, vb, emit_fragment);
 		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vb, vc, emit_fragment);
 		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vc, va, emit_fragment);
+
+		// min max x,y
+		float min_x = std::numeric_limits<float>::max();
+		float min_y = std::numeric_limits<float>::max();
+		float max_x = std::numeric_limits<float>::min();
+		float max_y = std::numeric_limits<float>::min();
+		// iter pixel pos, determine using edge function(cross prod)
+
+		min_x = std::min(min_x, va.fb_position.x);
+		min_x = std::min(min_x, vb.fb_position.x);
+		min_x = std::min(min_x, vc.fb_position.x);
+
+		min_y = std::min(min_y, va.fb_position.y);
+		min_y = std::min(min_y, vb.fb_position.y);
+		min_y = std::min(min_y, vc.fb_position.y);
+
+		max_x = std::max(max_x, va.fb_position.x);
+		max_x = std::max(max_x, vb.fb_position.x);
+		max_x = std::max(max_x, vc.fb_position.x);
+
+		max_y = std::max(max_y, va.fb_position.y);
+		max_y = std::max(max_y, vb.fb_position.y);
+		max_y = std::max(max_y, vc.fb_position.y);
+
+		auto cw_right_edge_function = [&](const Vec2& point, Vec3* pOutBarycentrics) -> bool
+		{
+			Vec3 vb_va = vb.fb_position - va.fb_position;
+			vb_va.z = 0.f;
+			Vec3 p_va(point.x - va.fb_position.x, point.y - va.fb_position.y, 0.f);
+			Vec3 bary_x_vec = cross(vb_va, p_va);
+
+			Vec3 vc_vb = vc.fb_position - vb.fb_position;
+			vc_vb.z = 0.f;
+			Vec3 p_vb(point.x - vb.fb_position.x, point.y - vb.fb_position.y, 0.f);
+			Vec3 bary_y_vec = cross(vc_vb, p_vb);
+
+			Vec3 va_vc = va.fb_position - vc.fb_position;
+			va_vc.z = 0.f;
+			Vec3 p_vc(point.x - vc.fb_position.x, point.y - vc.fb_position.y, 0.f);
+			Vec3 bary_z_vec = cross(va_vc, p_vc);
+
+			const float bary_x = bary_x_vec.norm(); // vbva
+			const float bary_y = bary_y_vec.norm(); // vcvb
+			const float bary_z = bary_z_vec.norm(); // vavc
+
+			bool bPassed = true; // left-top rule
+			bPassed &= bary_x == 0.f ? ((vb_va.y == 0.f && vb_va.x > 0.f) || vb_va.y > 0.f) : bary_x > 0.f;
+			bPassed &= bary_y == 0.f ? ((vc_vb.y == 0.f && vc_vb.x > 0.f) || vc_vb.y > 0.f) : bary_y > 0.f;
+			bPassed &= bary_z == 0.f ? ((va_vc.y == 0.f && va_vc.x > 0.f) || va_vc.y > 0.f) : bary_z > 0.f;
+
+
+			if (bPassed)
+			{
+				const float bary_total = bary_x + bary_y + bary_z;
+
+				pOutBarycentrics->x = bary_x / bary_total;
+				pOutBarycentrics->y = bary_y / bary_total;
+				pOutBarycentrics->z = bary_z / bary_total;
+			}
+			
+
+			return bPassed;
+		};
+
+
+		Fragment frag;
+		frag.attributes = va.attributes;
+		Vec3 barycentrics(0.f, 0.f, 0.f);
+		frag.derivatives.fill(barycentrics.xy()); // 0 init
+
+		for (uint pixel_x = min_x; pixel_x <= max_x; ++pixel_x)
+		{
+			for (uint pixel_y = min_y; pixel_y <= max_y; ++pixel_y)
+			{
+				Vec2 fPixel(pixel_x + 0.5f, pixel_y + 0.5f);
+				if (cw_right_edge_function(fPixel, &barycentrics) == true)
+				{
+					frag.fb_position = Vec3{fPixel.x, fPixel.y, va.fb_position.z * barycentrics.x + vb.fb_position.z * barycentrics.y + vc.fb_position.z * barycentrics.z};
+					emit_fragment(frag);
+				}
+				else
+				{
+					continue;
+				}
+			}
+		}
+
+
+
 	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth) {
 		// A1T5: screen-space smooth triangles
 		// TODO: rasterize triangle (see block comment above this function).
