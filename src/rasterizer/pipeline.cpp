@@ -113,7 +113,7 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 	// depth test + shade + blend fragments:
 	uint32_t out_of_range = 0; // check if rasterization produced fragments outside framebuffer 
 							   // (indicates something is wrong with clipping)
-	for (auto const& f : fragments) {
+	for (Fragment const& f : fragments) {
 
 		// fragment location (in pixels):
 		int32_t x = (int32_t)std::floor(f.fb_position.x);
@@ -134,15 +134,22 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 
 
 		// depth test:
-		if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Always) {
+		if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Always)
+		{
 			// "Always" means the depth test always passes.
-		} else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Never) {
+		} else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Never)
+		{
 			// "Never" means the depth test never passes.
 			continue; //discard this fragment
-		} else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Less) {
+		} else if constexpr ((flags & PipelineMask_Depth) == Pipeline_Depth_Less)
+		{
 			// "Less" means the depth test passes when the new fragment has depth less than the stored depth.
 			// A1T4: Depth_Less
 			// TODO: implement depth test! We want to only emit fragments that have a depth less than the stored depth, hence "Depth_Less".
+			if (f.fb_position.z > fb_depth)
+			{
+				continue;
+			}
 		} else {
 			static_assert((flags & PipelineMask_Depth) <= Pipeline_Depth_Always, "Unknown depth test flag.");
 		}
@@ -165,12 +172,12 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Add) {
 				// A1T4: Blend_Add
 				// TODO: framebuffer color should have fragment color multiplied by fragment opacity added to it.
-				fb_color = sf.color; //<-- replace this line
+				fb_color += sf.opacity * sf.color; //<-- replace this line
 			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Over) {
 				// A1T4: Blend_Over
 				// TODO: set framebuffer color to the result of "over" blending (also called "alpha blending") the fragment color over the framebuffer color, using the fragment's opacity
 				// 		 You may assume that the framebuffer color has its alpha premultiplied already, and you just want to compute the resulting composite color
-				fb_color = sf.color; //<-- replace this line
+				fb_color = sf.color + (fb_color * (1.f - sf.opacity)); //<-- replace this line
 			} else {
 				static_assert((flags & PipelineMask_Blend) <= Pipeline_Blend_Over, "Unknown blending flag.");
 			}
