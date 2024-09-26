@@ -7,6 +7,7 @@
 #include "../lib/log.h"
 #include "../lib/mathlib.h" // IWYU pragma: keep
 #include "framebuffer.h"
+#include "rasterizer/programs.h"
 #include "sample_pattern.h" // IWYU pragma: keep
 template<PrimitiveType primitive_type, class Program, uint32_t flags>
 void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& vertices,
@@ -548,7 +549,7 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 	//  same code paths. Be aware, however, that all of them need to remain working!
 	//  (e.g., if you break Flat while implementing Correct, you won't get points
 	//   for Flat.)
-	if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Flat) {
+
 		// A1T3: flat triangles
 		// min max x,y
 		float min_x = std::numeric_limits<float>::max();
@@ -591,62 +592,142 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 			
 
 			bool bPassed = true; // left-top rule
-			bPassed &= (w_a == 0.f ? ((edge0.y == 0.f && edge0.x > 0.f) || edge0.y > 0.f) : w_a < 0.f);
-			bPassed &= (w_b == 0.f ? ((edge1.y == 0.f && edge1.x > 0.f) || edge1.y > 0.f) : w_b < 0.f);
-			bPassed &= (w_c == 0.f ? ((edge2.y == 0.f && edge2.x > 0.f) || edge2.y > 0.f) : w_c < 0.f);
+			bPassed &= (w_a == 0.f ? ((edge0.y == 0.f && edge0.x >= 0.f) || edge0.y >= 0.f) : w_a < 0.f);
+			bPassed &= (w_b == 0.f ? ((edge1.y == 0.f && edge1.x >= 0.f) || edge1.y >= 0.f) : w_b < 0.f);
+			bPassed &= (w_c == 0.f ? ((edge2.y == 0.f && edge2.x >= 0.f) || edge2.y >= 0.f) : w_c < 0.f);
 
+			pOutBarycentrics->x = w_a / area; // va attributes are paired with vcvb, edge0
+			pOutBarycentrics->y = w_b / area; // vb attributes are paried with vavc, edge1
+			pOutBarycentrics->z = w_c / area; // vc attributes are paried with vbva, edge2
 
-			if (bPassed)
-			{
-				pOutBarycentrics->x = w_a / area; // va attributes are paired with vcvb, edge0
-				pOutBarycentrics->y = w_b / area; // vb attributes are paried with vavc, edge1
-				pOutBarycentrics->z = w_c / area; // vc attributes are paried with vbva, edge2
-			}
 
 			return bPassed;
 		};
 
 
-		Fragment frag;
-		frag.attributes = va.attributes;
-		Vec3 barycentrics(0.f, 0.f, 0.f);
+		// top left, clock wise block. neighbor relationship in index is
+		// 0->1,3  1->0,2  2->1,3  3->0,2
+		Fragment frags[4];
+		constexpr std::pair<int, int> DXDY_INDICES[4] = {{1, 3}, {0, 2}, {3, 1}, {2, 0}};
+		Vec3 barycentrics[4];
+		Vec2 pixels[4];
+		bool passed[4];
+
 		max_x += 1.f;
 		max_y += 1.f;
 
-		for (uint pixel_x = min_x; pixel_x <= max_x; ++pixel_x)
+		for (uint pixel_x = min_x; pixel_x <= max_x; pixel_x += 2)
 		{
-			for (uint pixel_y = min_y; pixel_y <= max_y; ++pixel_y)
+			for (uint pixel_y = min_y; pixel_y <= max_y; pixel_y += 2)
 			{
-				Vec2 fPixel(pixel_x + 0.5f, pixel_y + 0.5f);
-				if (cw_right_edge_function(fPixel, &barycentrics) == true)
+				pixels[0] = Vec2(pixel_x + 0.5f, pixel_y + 0.5f);
+				pixels[1] = pixels[0];
+				pixels[1].x += 1.f;
+				pixels[2] = pixels[1];
+				pixels[2].y += 1.f;
+				pixels[3] = pixels[2];
+				pixels[3].x -= 1.f;
+
+				// frag filling
+				for (int i = 0; i < 4; ++i)
 				{
-					frag.fb_position = Vec3{fPixel.x, fPixel.y, va.fb_position.z * barycentrics.x + vb.fb_position.z * barycentrics.y + vc.fb_position.z * barycentrics.z};
-					emit_fragment(frag);
+					passed[i] = cw_right_edge_function(pixels[i], &barycentrics[i]);
+					frags[i].fb_position = Vec3{pixels[i].x, pixels[i].y, va.fb_position.z * barycentrics[i].x + vb.fb_position.z * barycentrics[i].y + vc.fb_position.z * barycentrics[i].z};
 				}
-				else
+
+				// attribute filling
+				for (int j = 0; j < 4; ++j)
 				{
-					continue;
+					if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Flat)
+					{
+						frags[j].attributes = va.attributes;
+						frags[j].derivatives = {}; // zero init
+					} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth)
+					{
+						// A1T5: screen-space smooth triangles
+						// TODO: rasterize triangle (see block comment above this function).
+						for (int i = 0; i < VA; ++i)
+						{
+							frags[j].attributes[i] = va.attributes[i] * barycentrics[j].x + vb.attributes[i] * barycentrics[j].y + vc.attributes[i] * barycentrics[j].z;
+						}
+					} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Correct)
+					{
+						// A1T5: perspective correct triangles
+						// TODO: rasterize triangle (block comment above this function).
+						float interpolated_inv_w = va.inv_w * barycentrics[j].x + vb.inv_w * barycentrics[j].y + vc.inv_w * barycentrics[j].z;
+						for (int i = 0; i < VA; ++i)
+						{
+							frags[j].attributes[i] = va.attributes[i] * va.inv_w * barycentrics[j].x + vb.attributes[i] * vb.inv_w * barycentrics[j].y + vc.attributes[i] * vc.inv_w * barycentrics[j].z;
+							frags[j].attributes[i] /= interpolated_inv_w;
+						}
+					}
+				}
+
+				// derivative filling
+				for (int k = 0; k < 4; ++k)
+				{
+					if (passed[k] == false)
+					{
+						continue;
+					}
+
+					if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Flat)
+					{
+						frags[k].derivatives = {};
+					}
+					else
+					{
+						int dx_index = DXDY_INDICES[k].first;
+						int dy_index = DXDY_INDICES[k].second;
+
+						float cur_u = frags[k].attributes[Programs::Lambertian::FA_TexCoordU];
+						float cur_v = frags[k].attributes[Programs::Lambertian::FA_TexCoordV];
+
+						float x_u = frags[dx_index].attributes[Programs::Lambertian::FA_TexCoordU];
+						float x_v = frags[dx_index].attributes[Programs::Lambertian::FA_TexCoordV];
+
+						float y_u = frags[dy_index].attributes[Programs::Lambertian::FA_TexCoordU];
+						float y_v = frags[dy_index].attributes[Programs::Lambertian::FA_TexCoordV];
+
+						float dudx = x_u - cur_u;
+						float dvdx = x_v - cur_v;
+
+						float dudy = y_u - cur_u;
+						float dvdy = y_v - cur_v;
+
+						// right, down is correct derivative, align with screen space coordinate orientation
+
+						if (k == 1)
+						{
+							dudx = -dudx;
+							dvdx = -dvdx;
+						}
+						else if (k == 2)
+						{
+							dudx = -dudx;
+							dvdx = -dvdx;
+
+							dudy = -dudy;
+							dvdy = -dvdy;
+						}
+						else if (k == 3)
+						{
+							dudy = -dudy;
+							dvdy = -dvdy;
+						}
+
+
+						frags[k].derivatives[Programs::Lambertian::FA_TexCoordU].x = dudx;
+						frags[k].derivatives[Programs::Lambertian::FA_TexCoordU].y = dudy;
+						frags[k].derivatives[Programs::Lambertian::FA_TexCoordV].x = dvdx;
+						frags[k].derivatives[Programs::Lambertian::FA_TexCoordV].y = dvdy;
+					}
+
+
+					emit_fragment(frags[k]);
 				}
 			}
 		}
-
-
-
-	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth) {
-		// A1T5: screen-space smooth triangles
-		// TODO: rasterize triangle (see block comment above this function).
-
-		// As a placeholder, here's code that calls the Flat interpolation version of the function:
-		//(remove this and replace it with a real solution)
-		Pipeline<PrimitiveType::Lines, P, (flags & ~PipelineMask_Interp) | Pipeline_Interp_Flat>::rasterize_triangle(va, vb, vc, emit_fragment);
-	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Correct) {
-		// A1T5: perspective correct triangles
-		// TODO: rasterize triangle (block comment above this function).
-
-		// As a placeholder, here's code that calls the Screen-space interpolation function:
-		//(remove this and replace it with a real solution)
-		Pipeline<PrimitiveType::Lines, P, (flags & ~PipelineMask_Interp) | Pipeline_Interp_Smooth>::rasterize_triangle(va, vb, vc, emit_fragment);
-	}
 }
 
 //-------------------------------------------------------------------------
