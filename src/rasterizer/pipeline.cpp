@@ -92,22 +92,47 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 	//--------------------------
 	// rasterize primitives:
 
+
 	std::vector<Fragment> fragments;
 
 	// helper used to put output of rasterization functions into fragments:
 	auto emit_fragment = [&](Fragment const& f) { fragments.emplace_back(f); };
 
-	// actually do rasterization:
-	if constexpr (primitive_type == PrimitiveType::Lines) {
-		for (uint32_t i = 0; i + 1 < clipped_vertices.size(); i += 2) {
-			rasterize_line(clipped_vertices[i], clipped_vertices[i + 1], emit_fragment);
+	std::vector< Vec3 > const &samples = framebuffer.sample_pattern.centers_and_weights;
+	for (uint32_t s = 0; s < samples.size(); ++s) { 
+			// actually do rasterization:
+			const auto& offset = samples[s].xy();
+		if constexpr (primitive_type == PrimitiveType::Lines) {
+			for (uint32_t i = 0; i + 1 < clipped_vertices.size(); i += 2) {
+				ClippedVertex a = clipped_vertices[i];
+				a.fb_position.x -= offset.x;
+				a.fb_position.y -= offset.y;
+
+				ClippedVertex b = clipped_vertices[i + 1];
+				b.fb_position.x -= offset.x;
+				b.fb_position.y -= offset.y;
+
+				rasterize_line(a, b, emit_fragment);
+			}
+		} else if constexpr (primitive_type == PrimitiveType::Triangles) {
+			for (uint32_t i = 0; i + 2 < clipped_vertices.size(); i += 3) {
+				ClippedVertex a = clipped_vertices[i];
+				a.fb_position.x -= offset.x;
+				a.fb_position.y -= offset.y;
+
+				ClippedVertex b = clipped_vertices[i + 1];
+				b.fb_position.x -= offset.x;
+				b.fb_position.y -= offset.y;
+
+				ClippedVertex c = clipped_vertices[i + 2];
+				c.fb_position.x -= offset.x;
+				c.fb_position.y -= offset.y;
+				
+				rasterize_triangle(a, b, c, emit_fragment);
+			}
+		} else {
+			static_assert(primitive_type == PrimitiveType::Lines, "Unsupported primitive type.");
 		}
-	} else if constexpr (primitive_type == PrimitiveType::Triangles) {
-		for (uint32_t i = 0; i + 2 < clipped_vertices.size(); i += 3) {
-			rasterize_triangle(clipped_vertices[i], clipped_vertices[i + 1], clipped_vertices[i + 2], emit_fragment);
-		}
-	} else {
-		static_assert(primitive_type == PrimitiveType::Lines, "Unsupported primitive type.");
 	}
 
 	//--------------------------
