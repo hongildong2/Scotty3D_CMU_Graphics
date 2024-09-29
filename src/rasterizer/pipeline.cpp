@@ -696,7 +696,7 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 						float dvdy = y_v - cur_v;
 
 						// right, down is correct derivative, align with screen space coordinate orientation
-
+						// forward derivative, backward derivative!!
 						if (k == 1)
 						{
 							dudx = -dudx;
